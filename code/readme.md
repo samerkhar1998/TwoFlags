@@ -16,7 +16,7 @@ To start the game, you will need to run the main driver file named FlagsMain.py
 * The player can also win by making the opponent run out of time.
 
 ## File Structure
-* `FlagsEngine.py`: This file contains the logic for the game, including the board representation, move validation, and game over conditions.
+* `FlagsEngine.py`: contains the main GameState class which is responsible for storing all the information about the current state of the game, determining the valid moves at the current state and keeping a move log.
 * `smartMoveFinder.py`: This file contains an AI agent that can play the game.
 * `Zobrist.py`: This file contains code for Zobrist Hashing, it is used for transposition table in the minimax algorithm.
 * `FlagsMain.py`: This file is the main driver for the game. It handles user input and updates the graphics.
