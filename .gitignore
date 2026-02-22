@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+
+# Local runtime profile data
+data/profile.json
