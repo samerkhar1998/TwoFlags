@@ -4,8 +4,9 @@ import time
 import Zobrist
 
 
-WIN_SCORE = 1_000_000
-INFINITY = 10_000_000
+# Must be far above any heuristic evaluation swing so immediate wins are always preferred.
+WIN_SCORE = 100_000_000
+INFINITY = 1_000_000_000
 
 # Difficulty presets control depth, randomness, and whether iterative deepening is enabled.
 DIFFICULTY_SETTINGS = {
@@ -105,6 +106,58 @@ class Agent:
 
         return self._choose_move_by_difficulty(best_move, scored_moves, settings)
 
+    def evaluate_position(self, gs):
+        """
+        Public evaluation helper for Coach Mode.
+        Returns white-centric score in pawn units (internal score / 100).
+        """
+        return self._evaluate_position(gs) / 100.0
+
+    def best_move_and_score(self, gs, valid_moves, difficulty="moderate"):
+        """
+        Public helper for Coach Mode.
+        Returns (best_move, score_for_side_to_move_in_pawns).
+        """
+        if not valid_moves:
+            terminal = (1 if gs.whiteToMove else -1) * self._terminal_white_score(gs, 0)
+            return None, terminal / 100.0
+
+        settings = self._get_settings(difficulty)
+        self.nodes = 0
+        zb = Zobrist.zobrist()
+        self._sync_zobrist(gs, zb)
+
+        color = 1 if gs.whiteToMove else -1
+        deadline = time.perf_counter() + (settings["time_ms"] / 1000.0)
+        best_move = self.firstMoveFromMoveOrdering(valid_moves)
+        best_score = None
+
+        try:
+            if settings["iterative"]:
+                for depth in range(1, settings["max_depth"] + 1):
+                    score, candidate, _ = self._search_root(gs, valid_moves, depth, color, zb, deadline)
+                    if candidate is not None:
+                        best_move = candidate
+                        best_score = score
+                    if abs(score) >= WIN_SCORE - 2000:
+                        break
+            else:
+                score, candidate, _ = self._search_root(gs, valid_moves, settings["depth"], color, zb, deadline)
+                if candidate is not None:
+                    best_move = candidate
+                best_score = score
+        except SearchTimeout:
+            pass
+
+        if best_score is None:
+            # Fallback: static score after the selected fallback move.
+            gs.makeMove(best_move)
+            score_white = self._evaluate_position(gs)
+            gs.undoMove()
+            best_score = score_white if color == 1 else -score_white
+
+        return best_move, best_score / 100.0
+
     # Backward-compatible wrapper for existing multiprocessing call sites.
     def findBestMove(self, gs, validMoves, zb, returnQueue, difficulty="moderate"):
         move = self.find_best_move(gs, validMoves, difficulty=difficulty)
@@ -129,11 +182,12 @@ class Agent:
             self._check_timeout(deadline)
             gs.makeMove(move)
             zb.updateHashKey(move, gs)
-
-            score = -self._alpha_beta(gs, depth - 1, -beta, -alpha, -color, 1, zb, deadline)
-
-            zb.undoHashKey(gs.moveLog[-1], gs)
-            gs.undoMove()
+            try:
+                score = -self._alpha_beta(gs, depth - 1, -beta, -alpha, -color, 1, zb, deadline)
+            finally:
+                # Always restore board/hash even when search times out.
+                zb.undoHashKey(gs.moveLog[-1], gs)
+                gs.undoMove()
 
             scored.append((score, move))
 
@@ -181,11 +235,12 @@ class Agent:
         for move in ordered_moves:
             gs.makeMove(move)
             zb.updateHashKey(move, gs)
-
-            score = -self._alpha_beta(gs, depth - 1, -beta, -alpha, -color, ply + 1, zb, deadline)
-
-            zb.undoHashKey(gs.moveLog[-1], gs)
-            gs.undoMove()
+            try:
+                score = -self._alpha_beta(gs, depth - 1, -beta, -alpha, -color, ply + 1, zb, deadline)
+            finally:
+                # Always restore board/hash even when search times out.
+                zb.undoHashKey(gs.moveLog[-1], gs)
+                gs.undoMove()
 
             if score > best_score:
                 best_score = score
@@ -419,3 +474,13 @@ _DEFAULT_AGENT = Agent()
 def find_best_move(gs, valid_moves, difficulty="moderate"):
     """Module-level convenience API requested by the game integration."""
     return _DEFAULT_AGENT.find_best_move(gs, valid_moves, difficulty)
+
+
+def evaluate_position(gs):
+    """Module-level helper for white-centric evaluation in pawn units."""
+    return _DEFAULT_AGENT.evaluate_position(gs)
+
+
+def best_move_and_score(gs, valid_moves, difficulty="moderate"):
+    """Module-level helper returning (best_move, score_for_side_to_move)."""
+    return _DEFAULT_AGENT.best_move_and_score(gs, valid_moves, difficulty)
